@@ -91,96 +91,192 @@
   function toggleMenu(){ document.getElementById("menu").classList.toggle("active"); }
   function toggleDropdown(e){ e.preventDefault(); e.target.parentElement.classList.toggle("active"); }
 
-  const apiKey = "dBZfCkUEmKDAX0PFgk83SRNuiCej6zRS";
+  const apiKey = "d2f6uh1r01qj3egrh040d2f6uh1r01qj3egrh04g"; // ← replace with your real key
+  const symbols = [
+    "AAPL","MSFT","GOOGL","AMZN","TSLA","NVDA","META","NFLX","JPM","V",
+    "KO","PEP","DIS","AMD","INTC","XOM","PFE","BA","CSCO","WMT"
+  ]; // Add or remove tickers as needed
 
-  async function fetchTopGainers() {
+  // Fetch quote data (price, change %)
+  async function fetchQuote(symbol) {
     try {
-      const res = await fetch(`https://financialmodelingprep.com/api/v3/gainers?apikey=${apiKey}`);
+      const res = await fetch(`https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${apiKey}`);
       const data = await res.json();
-      return data.slice(0,3);
-    } catch { return []; }
+      return {
+        symbol,
+        current: data.c,
+        previous: data.pc,
+        changePercent: ((data.c - data.pc) / data.pc) * 100
+      };
+    } catch {
+      return null;
+    }
   }
 
-  async function fetchTopLosers() {
+  // Fetch company profile (name + logo)
+  async function fetchProfile(symbol) {
     try {
-      const res = await fetch(`https://financialmodelingprep.com/api/v3/losers?apikey=${apiKey}`);
+      const res = await fetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${symbol}&token=${apiKey}`);
       const data = await res.json();
-      return data.slice(0,3);
-    } catch { return []; }
+      return {
+        name: data.name || symbol,
+        logo: data.logo || null
+      };
+    } catch {
+      return { name: symbol, logo: null };
+    }
   }
 
-  async function fetchLogo(ticker){
-    try{
-      const res = await fetch(`https://financialmodelingprep.com/api/v3/profile/${ticker}?apikey=${apiKey}`);
-      const data = await res.json();
-      // return null if missing/empty so we don't render an <img> at all
-      return data[0]?.image && data[0].image.trim() !== "" ? data[0].image : null;
-    } catch { return null; }
-  }
-
-  // Helps avoid "5.23%%" when API already includes the percent sign
-  function formatChange(v){
-    const n = parseFloat(v);
-    return isNaN(n) ? String(v) : n.toFixed(2) + "%";
-  }
-
-  async function loadGainersLosers() {
+  async function loadTopBottom() {
     const gainersTable = document.getElementById("gainers-table");
     const losersTable = document.getElementById("losers-table");
-
     gainersTable.innerHTML = `<tr><td colspan="3">Loading data...</td></tr>`;
     losersTable.innerHTML = `<tr><td colspan="3">Loading data...</td></tr>`;
 
-    const [gainers, losers] = await Promise.all([fetchTopGainers(), fetchTopLosers()]);
+    // Fetch all quotes in parallel
+    const quotes = (await Promise.all(symbols.map(fetchQuote))).filter(Boolean);
 
-    gainersTable.innerHTML = "";
-    losersTable.innerHTML = "";
+    // Sort by % change
+    quotes.sort((a,b) => b.changePercent - a.changePercent);
+    const top = quotes.slice(0,3);
+    const bottom = quotes.slice(-3).reverse();
 
-    for (let stock of gainers){
-      const ticker = stock.ticker || stock.symbol || "";
-      const name = stock.companyName || stock.name || ticker;
-      const price = parseFloat(stock.price);
-      const change = formatChange(stock.changesPercentage);
+    // Fetch profiles for the top and bottom stocks
+    const allProfiles = await Promise.all([...top, ...bottom].map(s => fetchProfile(s.symbol)));
+    const profilesMap = {};
+    [...top, ...bottom].forEach((s,i) => profilesMap[s.symbol] = allProfiles[i]);
 
-      const logo = await fetchLogo(ticker); // may be null
-
-      gainersTable.innerHTML += `
+    // Render Top Gainers
+    gainersTable.innerHTML = top.map(stock => {
+      const profile = profilesMap[stock.symbol];
+      return `
         <tr>
           <td class="company-cell">
-            ${logo ? `<img src="${logo}" alt="${ticker} logo" onerror="this.remove()">` : ""}
-            <span>${name} (${ticker})</span>
+            ${profile.logo ? `<img src="${profile.logo}" alt="${stock.symbol} logo" onerror="this.remove()">` : ""}
+            <span>${profile.name} (${stock.symbol})</span>
           </td>
-          <td>${isNaN(price) ? "-" : `$${price.toFixed(2)}`}</td>
-          <td style="color:green;">${change}</td>
-        </tr>`;
-    }
+          <td>$${stock.current.toFixed(2)}</td>
+          <td style="color:green;">${stock.changePercent.toFixed(2)}%</td>
+        </tr>
+      `;
+    }).join("");
 
-    for (let stock of losers){
-      const ticker = stock.ticker || stock.symbol || "";
-      const name = stock.companyName || stock.name || ticker;
-      const price = parseFloat(stock.price);
-      const change = formatChange(stock.changesPercentage);
-
-      const logo = await fetchLogo(ticker); // may be null
-
-      losersTable.innerHTML += `
+    // Render Top Losers
+    losersTable.innerHTML = bottom.map(stock => {
+      const profile = profilesMap[stock.symbol];
+      return `
         <tr>
           <td class="company-cell">
-            ${logo ? `<img src="${logo}" alt="${ticker} logo" onerror="this.remove()">` : ""}
-            <span>${name} (${ticker})</span>
+            ${profile.logo ? `<img src="${profile.logo}" alt="${stock.symbol} logo" onerror="this.remove()">` : ""}
+            <span>${profile.name} (${stock.symbol})</span>
           </td>
-          <td>${isNaN(price) ? "-" : `$${price.toFixed(2)}`}</td>
-          <td style="color:red;">${change}</td>
-        </tr>`;
+          <td>$${stock.current.toFixed(2)}</td>
+          <td style="color:red;">${stock.changePercent.toFixed(2)}%</td>
+        </tr>
+      `;
+    }).join("");
+  }
+
+  loadTopBottom();
+  setInterval(loadTopBottom, 2 * 60 * 60 * 1000); // Refresh every 2 hours
+</script>
+<script>
+  function toggleMenu(){ document.getElementById("menu").classList.toggle("active"); }
+  function toggleDropdown(e){ e.preventDefault(); e.target.parentElement.classList.toggle("active"); }
+
+  const apiKey = d2f6uh1r01qj3egrh040d2f6uh1r01qj3egrh04g; // ← replace with your real key
+  const symbols = [
+    "AAPL","MSFT","GOOGL","AMZN","TSLA","NVDA","META","NFLX","JPM","V",
+    "KO","PEP","DIS","AMD","INTC","XOM","PFE","BA","CSCO","WMT"
+  ]; // Add or remove tickers as needed
+
+  // Fetch quote data (price, change %)
+  async function fetchQuote(symbol) {
+    try {
+      const res = await fetch(`https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${apiKey}`);
+      const data = await res.json();
+      return {
+        symbol,
+        current: data.c,
+        previous: data.pc,
+        changePercent: ((data.c - data.pc) / data.pc) * 100
+      };
+    } catch {
+      return null;
     }
   }
 
-  loadGainersLosers();
-  setInterval(loadGainersLosers, 2*60*60*1000);
+  // Fetch company profile (name + logo)
+  async function fetchProfile(symbol) {
+    try {
+      const res = await fetch(`https://finnhub.io/api/v1/stock/profile2?symbol=${symbol}&token=${apiKey}`);
+      const data = await res.json();
+      return {
+        name: data.name || symbol,
+        logo: data.logo || null
+      };
+    } catch {
+      return { name: symbol, logo: null };
+    }
+  }
+
+  async function loadTopBottom() {
+    const gainersTable = document.getElementById("gainers-table");
+    const losersTable = document.getElementById("losers-table");
+    gainersTable.innerHTML = `<tr><td colspan="3">Loading data...</td></tr>`;
+    losersTable.innerHTML = `<tr><td colspan="3">Loading data...</td></tr>`;
+
+    // Fetch all quotes in parallel
+    const quotes = (await Promise.all(symbols.map(fetchQuote))).filter(Boolean);
+
+    // Sort by % change
+    quotes.sort((a,b) => b.changePercent - a.changePercent);
+    const top = quotes.slice(0,3);
+    const bottom = quotes.slice(-3).reverse();
+
+    // Fetch profiles for the top and bottom stocks
+    const allProfiles = await Promise.all([...top, ...bottom].map(s => fetchProfile(s.symbol)));
+    const profilesMap = {};
+    [...top, ...bottom].forEach((s,i) => profilesMap[s.symbol] = allProfiles[i]);
+
+    // Render Top Gainers
+    gainersTable.innerHTML = top.map(stock => {
+      const profile = profilesMap[stock.symbol];
+      return `
+        <tr>
+          <td class="company-cell">
+            ${profile.logo ? `<img src="${profile.logo}" alt="${stock.symbol} logo" onerror="this.remove()">` : ""}
+            <span>${profile.name} (${stock.symbol})</span>
+          </td>
+          <td>$${stock.current.toFixed(2)}</td>
+          <td style="color:green;">${stock.changePercent.toFixed(2)}%</td>
+        </tr>
+      `;
+    }).join("");
+
+    // Render Top Losers
+    losersTable.innerHTML = bottom.map(stock => {
+      const profile = profilesMap[stock.symbol];
+      return `
+        <tr>
+          <td class="company-cell">
+            ${profile.logo ? `<img src="${profile.logo}" alt="${stock.symbol} logo" onerror="this.remove()">` : ""}
+            <span>${profile.name} (${stock.symbol})</span>
+          </td>
+          <td>$${stock.current.toFixed(2)}</td>
+          <td style="color:red;">${stock.changePercent.toFixed(2)}%</td>
+        </tr>
+      `;
+    }).join("");
+  }
+
+  loadTopBottom();
+  setInterval(loadTopBottom, 2 * 60 * 60 * 1000); // Refresh every 2 hours
 </script>
 
 </body>
 </html>
+
 
 
 
